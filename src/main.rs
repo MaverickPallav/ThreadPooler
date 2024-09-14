@@ -1,17 +1,44 @@
-use threadpooler_r::thread_pool::ThreadPool;
-use std::thread;
-use std::time::Duration;
+mod thread_pool;
+mod worker;
+mod task;
+mod scheduling;
+mod monitoring;
+
+use thread_pool::ThreadPool;
+use scheduling::{PriorityScheduling, RoundRobinScheduling};
+use monitoring::Monitoring;
+use std::sync::{Arc, Mutex};
+use env_logger;
 
 fn main() {
-    let mut pool = ThreadPool::new(3);
+    // Initialize logging
+    env_logger::init();
 
-    for i in 1..=10 {
-        pool.execute(move || {
-            println!("Executing Task-{}", i);
-            thread::sleep(Duration::from_secs(1));
-            println!("Task-{} Completed", i);
+    // Create a thread pool with round-robin scheduling strategy
+    let pool = ThreadPool::new(4, Box::new(RoundRobinScheduling::new()));
+
+    // Wrap the ThreadPool in an Arc and Mutex
+    let pool = Arc::new(Mutex::new(pool));
+
+    // Submit some example tasks
+    for i in 1..=4 {
+        let task_name = format!("Task-{}", i);
+        let pool = Arc::clone(&pool);
+
+        log::info!("Task name {}.", task_name);
+        std::thread::spawn(move || {
+            let pool = pool.lock().unwrap();
+            pool.submit_task(move || {
+                Monitoring::log_task_start(&task_name);
+                std::thread::sleep(std::time::Duration::from_secs(1)); // Simulate work
+                Monitoring::log_task_complete(&task_name);
+            });
         });
     }
 
-    pool.shutdown();
+    // Simulate monitoring system load
+    {
+        let mut pool = pool.lock().unwrap();
+        pool.monitor_system_load();
+    }
 }

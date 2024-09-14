@@ -1,26 +1,30 @@
+use std::panic::{catch_unwind, AssertUnwindSafe}; // Add this import
 use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
+use log::{info, error}; // For logging
+
+pub type Job = Box<dyn FnOnce() + Send + 'static>;
 
 pub struct Worker {
     id: usize,
-    thread: Option<thread::JoinHandle<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Worker {
-    pub fn new(
-        id: usize,
-        receiver: Arc<Mutex<mpsc::Receiver<Box<dyn FnOnce() + Send + 'static>>>>,
-    ) -> Worker {
-        let thread = thread::spawn(move || loop {
-            let message = receiver.lock().unwrap().recv();
-
-            match message {
+    pub fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = std::thread::spawn(move || loop {
+            let job = receiver.lock().unwrap().recv();
+            match job {
                 Ok(job) => {
-                    println!("Worker {} got a job; executing.", id);
-                    job();
+                    info!("Worker {} got a job; executing.", id);
+                    // Wrap the job in AssertUnwindSafe to allow catch_unwind
+                    if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
+                        job();
+                    })) {
+                        error!("Worker {} panicked during job execution: {:?}", id, e);
+                    }
                 }
                 Err(_) => {
-                    println!("Worker {} disconnected; shutting down.", id);
+                    error!("Worker {} disconnected; shutting down.", id);
                     break;
                 }
             }
